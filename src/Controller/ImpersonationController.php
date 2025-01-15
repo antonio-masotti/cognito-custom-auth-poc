@@ -29,7 +29,7 @@ class ImpersonationController extends AbstractController
 
         $targetUserId = $content['targetUserId'] ?? null;
 
-        if (!$targetUserId) {
+        if (!$targetUserId || !is_string($targetUserId)) {
             $this->logger->warning('Target user ID is required');
 
             return new JsonResponse(['error' => 'Target user ID is required'], 400);

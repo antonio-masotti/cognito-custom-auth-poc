@@ -5,13 +5,14 @@ declare(strict_types=1);
 namespace App\Service;
 
 use Aws\CognitoIdentity\CognitoIdentityClient;
+use Aws\CognitoIdentityProvider\CognitoIdentityProviderClient;
 use Aws\SecretsManager\SecretsManagerClient;
 use Symfony\Component\HttpKernel\Log\Logger;
 
 class CognitoService
 {
     private Logger $logger;
-    private CognitoIdentityClient $cognitoClient;
+    private CognitoIdentityProviderClient $cognitoClient;
     private SecretsManagerClient $secretsClient;
 
     public function __construct(
@@ -21,7 +22,7 @@ class CognitoService
     ) {
         $this->logger = new Logger();
 
-        $this->cognitoClient = new CognitoIdentityClient([
+        $this->cognitoClient = new CognitoIdentityProviderClient([
             'version' => 'latest',
             'region' => $this->region,
             'profile' => $_ENV['AWS_PROFILE'],
@@ -40,6 +41,11 @@ class CognitoService
         $this->logger->info('SecretsManagerClient initialized');
     }
 
+    /**
+     * @param string $targetUserId
+     * @return array{token: string, refreshToken: string, idToken: string, expiresIn: int}
+     * @throws \Exception
+     */
     public function impersonateUser(string $targetUserId): array
     {
         // Get the current secret from Secrets Manager
