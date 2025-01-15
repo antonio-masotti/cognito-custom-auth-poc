@@ -46,10 +46,9 @@ class SecretsManagerService
         } catch (SecretsManagerException $e) {
             $this->logger->error('Failed to retrieve secret', [
                 'secretId' => $secretId,
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ]);
             throw new SecretNotFoundException('Failed to retrieve secret', 0, $e);
         }
     }
 }
-

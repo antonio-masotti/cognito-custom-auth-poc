@@ -11,3 +11,15 @@ phpstan:
 
 start:
     symfony server:start
+
+stop:
+    symfony server:stop
+
+start-docker:
+    docker-compose up -d --build
+
+stop-docker:
+    docker-compose down
+
+docker-prune:
+    docker system prune -a

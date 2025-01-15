@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cognito-impersonation
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    volumes:
+      - .:/var/www
+      - ~/.aws:/var/www/.aws:ro  # Mount to where www-data can access it, mark as read-only
+    environment:
+      PHP_IDE_CONFIG: "serverName=Docker"
+      XDEBUG_CONFIG: "client_host=host.docker.internal"
+      APP_ENV: dev
+      AWS_SHARED_CREDENTIALS_FILE: "/var/www/.aws/credentials"
+      AWS_CONFIG_FILE: "/var/www/.aws/config"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

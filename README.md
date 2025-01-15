@@ -29,12 +29,14 @@ AWS Credentials providers.
 
 ```bash
 symfony server:start
+# The project will be running on port 8000
 ```
 
 or via Docker:
 
 ```bash
 docker compose up -d
+# The project will be running on port 8080
 ```
 
 The [impersonate.http](./requests/impersonate.http) file contains a sample request to impersonate a user.

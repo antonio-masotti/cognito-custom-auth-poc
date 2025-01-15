@@ -5,15 +5,14 @@ declare(strict_types=1);
 namespace App\Service;
 
 use App\Exceptions\ImpersonationException;
-use App\Exceptions\SecretNotFoundException;
-use App\Service\SecretsManagerService;
 use Aws\CognitoIdentityProvider\CognitoIdentityProviderClient;
 use Aws\CognitoIdentityProvider\Exception\CognitoIdentityProviderException;
 use Aws\Credentials\CredentialProvider;
 use Psr\Log\LoggerInterface;
 
 class CognitoService
-{private CognitoIdentityProviderClient $cognitoClient;
+{
+    private CognitoIdentityProviderClient $cognitoClient;
     private SecretsManagerService $secretManager;
 
     public function __construct(
@@ -43,8 +42,10 @@ class CognitoService
             'region' => $this->region,
         ]);
     }
+
     /**
      * @return array{accessToken: string, refreshToken: string, idToken: string, expiresIn: int}
+     *
      * @throws ImpersonationException
      */
     public function impersonateUser(string $targetUserId, string $providedSecret): array
@@ -53,13 +54,14 @@ class CognitoService
 
         try {
             $challenge = $this->initiateChallengeAuthentication($targetUserId);
+
             return $this->respondToChallenge($targetUserId, $providedSecret, $challenge);
         } catch (CognitoIdentityProviderException $e) {
             $this->logger->error('Cognito authentication failed', [
                 'error' => $e->getMessage(),
                 'targetUserId' => $targetUserId,
             ]);
-            throw new ImpersonationException('Authentication failed: ' . $e->getMessage(), 0, $e);
+            throw new ImpersonationException('Authentication failed: '.$e->getMessage(), 0, $e);
         }
     }
 
@@ -88,12 +90,13 @@ class CognitoService
 
         return [
             'challengeName' => $result['ChallengeName'],
-            'session' => $result['Session']
+            'session' => $result['Session'],
         ];
     }
 
     /**
      * @return array{accessToken: string, refreshToken: string, idToken: string, expiresIn: int}
+     *
      * @throws ImpersonationException
      */
     private function respondToChallenge(string $targetUserId, string $secret, array $challenge): array
@@ -104,9 +107,9 @@ class CognitoService
             'ChallengeName' => $challenge['challengeName'],
             'ChallengeResponses' => [
                 'USERNAME' => $targetUserId,
-                'ANSWER' => $secret
+                'ANSWER' => $secret,
             ],
-            'Session' => $challenge['session']
+            'Session' => $challenge['session'],
         ]);
 
         if (!isset($response['AuthenticationResult'])) {
