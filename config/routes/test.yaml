@@ -1,0 +1,4 @@
+# config/routes/test.yaml
+app_test:
+  resource: ../../src/Controller/
+  type: attribute
