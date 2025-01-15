@@ -13,6 +13,13 @@
   AWS_COGNITO_USER_POOL_ID=your-pool-id
   AWS_COGNITO_CLIENT_ID=your-client-id
   AWS_SECRET_NAME=impersonation/secret
+  AWS_PROFILE=default
+```
+
+**Start the server:**
+
+```bash
+symfony server:start
 ```
 
 
