@@ -12,8 +12,8 @@ use Psr\Log\LoggerInterface;
 
 class CognitoService
 {
-    private CognitoIdentityProviderClient $cognitoClient;
-    private SecretsManagerService $secretManager;
+    private readonly CognitoIdentityProviderClient $cognitoClient;
+    private readonly SecretsManagerService $secretManager;
 
     public function __construct(
         private readonly string $userPoolId,
@@ -22,18 +22,16 @@ class CognitoService
         private readonly string $awsProfile,
         private readonly LoggerInterface $logger,
     ) {
-        $credentials = CredentialProvider::sso($this->awsProfile);
-
         $this->cognitoClient = new CognitoIdentityProviderClient([
             'version' => 'latest',
             'region' => $this->region,
-            'credentials' => $credentials,
+            'credentials' => CredentialProvider::sso($this->awsProfile),
         ]);
 
         $this->secretManager = new SecretsManagerService(
-            region: $this->region,
-            awsProfile: $this->awsProfile,
-            logger: $this->logger
+            $this->region,
+            $this->awsProfile,
+            $this->logger
         );
 
         $this->logger->info('Authentication service initialized', [
@@ -44,35 +42,43 @@ class CognitoService
     }
 
     /**
-     * @return array{accessToken: string, refreshToken: string, idToken: string, expiresIn: int}
-     *
      * @throws ImpersonationException
+     * @return array{accessToken: string, refreshToken: string, idToken: string, expiresIn: int}
      */
     public function impersonateUser(string $targetUserId, string $providedSecret): array
     {
         try {
             $this->validateImpersonationSecret($providedSecret);
-            $this->checkUserExists($targetUserId);
+            $this->verifyUserExists($targetUserId);
 
-            $challenge = $this->initiateChallengeAuthentication($targetUserId);
+            $challenge = $this->startAuthChallenge($targetUserId);
 
             return $this->respondToChallenge($targetUserId, $providedSecret, $challenge);
         } catch (ImpersonationException $e) {
-            $this->logger->error('Cognito authentication failed', [
+            $this->logger->error('Authentication failed', [
                 'error' => $e->getMessage(),
-                'targetUserId' => $targetUserId,
+                'userId' => $targetUserId,
             ]);
-            throw new ImpersonationException('Authentication failed: '.$e->getMessage(), 0, $e);
+            throw $e;
         }
     }
 
-    /**
-     * @return array{challengeName: string, session: string}
-     *
-     * @throws ImpersonationException
-     * @throws CognitoIdentityProviderException
-     */
-    private function initiateChallengeAuthentication(string $targetUserId): array
+    private function verifyUserExists(string $targetUserId): void
+    {
+        try {
+            $this->cognitoClient->adminGetUser([
+                'UserPoolId' => $this->userPoolId,
+                'Username' => $targetUserId,
+            ]);
+        } catch (CognitoIdentityProviderException $e) {
+            if ('UserNotFoundException' === $e->getAwsErrorCode()) {
+                throw new ImpersonationException('User not found');
+            }
+            throw $e;
+        }
+    }
+
+    private function startAuthChallenge(string $targetUserId): array
     {
         $result = $this->cognitoClient->adminInitiateAuth([
             'UserPoolId' => $this->userPoolId,
@@ -89,7 +95,7 @@ class CognitoService
         ]);
 
         if (!isset($result['ChallengeName'], $result['Session'])) {
-            throw new ImpersonationException('Invalid challenge response from Cognito');
+            throw new ImpersonationException('Invalid challenge response');
         }
 
         return [
@@ -143,27 +149,6 @@ class CognitoService
 
         if ($providedSecret !== $storedSecret) {
             throw new ImpersonationException('Invalid impersonation secret');
-        }
-    }
-
-    private function checkUserExists(string $targetUserId)
-    {
-        try {
-            $this->cognitoClient->adminGetUser([
-                'UserPoolId' => $this->userPoolId,
-                'Username' => $targetUserId,
-            ]);
-
-            $this->logger->info('User found', ['targetUserId' => $targetUserId]);
-
-        } catch (CognitoIdentityProviderException $e) {
-            if ($e->getAwsErrorCode() === 'UserNotFoundException') {
-                $this->logger->error('User not found', ['targetUserId' => $targetUserId]);
-                throw new ImpersonationException('User doesn\'t exist');
-            }
-
-            $this->logger->error('Cognito error', ['error' => $e->getMessage()]);
-            throw $e;
         }
     }
 }
