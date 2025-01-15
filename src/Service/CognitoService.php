@@ -56,7 +56,7 @@ class CognitoService
             $challenge = $this->initiateChallengeAuthentication($targetUserId);
 
             return $this->respondToChallenge($targetUserId, $providedSecret, $challenge);
-        } catch (CognitoIdentityProviderException $e) {
+        } catch (ImpersonationException $e) {
             $this->logger->error('Cognito authentication failed', [
                 'error' => $e->getMessage(),
                 'targetUserId' => $targetUserId,
@@ -66,7 +66,10 @@ class CognitoService
     }
 
     /**
+     * @return array{challengeName: string, session: string}
+     *
      * @throws ImpersonationException
+     * @throws CognitoIdentityProviderException
      */
     private function initiateChallengeAuthentication(string $targetUserId): array
     {
@@ -95,6 +98,8 @@ class CognitoService
     }
 
     /**
+     * @param array{challengeName: string, session: string} $challenge
+     *
      * @return array{accessToken: string, refreshToken: string, idToken: string, expiresIn: int}
      *
      * @throws ImpersonationException

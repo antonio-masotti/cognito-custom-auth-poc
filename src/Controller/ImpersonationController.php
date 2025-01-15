@@ -87,7 +87,7 @@ final class ImpersonationController extends AbstractController
             if (count($violations) > 0) {
                 $errors = [];
                 foreach ($violations as $violation) {
-                    $errors[$violation->getPropertyPath()] = $violation->getMessage();
+                    $errors[] = $violation->getPropertyPath().': '.$violation->getMessage();
                 }
                 throw new InvalidRequestException('Invalid request data', $errors);
             }
@@ -99,6 +99,8 @@ final class ImpersonationController extends AbstractController
     }
 
     /**
+     * @return array<string, string>
+     *
      * @throws \JsonException
      */
     private function decodeRequestContent(Request $request): array
