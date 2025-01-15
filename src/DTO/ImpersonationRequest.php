@@ -7,7 +7,7 @@ namespace App\DTO;
 class ImpersonationRequest
 {
     public function __construct(
-        public readonly string $targetUserId
+        public readonly string $targetUserId,
     ) {
     }
 }
