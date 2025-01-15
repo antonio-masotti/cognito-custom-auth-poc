@@ -42,7 +42,7 @@ final class ImpersonationController extends AbstractController
 
             $result = $this->authService->impersonateUser(
                 targetUserId: $impersonationRequest->targetUserId,
-                providedSecret: $impersonationRequest->secretCode
+                secret: $impersonationRequest->secretCode
             );
 
             return $this->json($result);
@@ -60,8 +60,9 @@ final class ImpersonationController extends AbstractController
     }
 
     /**
-     * @throws \JsonException
      * @return array<string, string>
+     *
+     * @throws \JsonException
      */
     public function parseRequest(Request $request): array
     {

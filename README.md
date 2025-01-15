@@ -15,11 +15,10 @@ while maintaining security and audit trails.
 - These envs set:
 
 ```text
-  AWS_REGION=your-region
-  AWS_COGNITO_USER_POOL_ID=your-pool-id
-  AWS_COGNITO_CLIENT_ID=your-client-id
-  AWS_SECRET_NAME=impersonation/secret
-  AWS_PROFILE=default
+AWS_REGION=your-region
+AWS_COGNITO_USER_POOL_ID=your-pool-id
+AWS_COGNITO_CLIENT_ID=your-client-id
+AWS_PROFILE=default
 ```
 
 **Note** This project uses AWS SSO as login provider. A slight change in the Service Code is needed to use other
@@ -28,67 +27,94 @@ AWS Credentials providers.
 **Start the server:**
 
 ```bash
-symfony server:start
-# The project will be running on port 8000
+symfony server:start    # Runs on port 8000
 ```
 
 or via Docker:
 
 ```bash
-docker compose up -d
-# The project will be running on port 8080
+docker compose up -d   # Runs on port 8080
 ```
 
 The [impersonate.http](./requests/impersonate.http) file contains a sample request to impersonate a user.
 
 ## How Custom Auth Challenge works
 
-Cognito Custom Authentication involves a challenge-response flow with three Lambda triggers:
+### The Custom Auth Flow from the perspective of the client (PHP)
 
-1. **Define Auth Challenge (defineAuthChallenge)**
-    - Determines the authentication flow (e.g. USERNAME_PASSWORD, CUSTOM_CHALLENGE)
-    - Tracks the number of attempts
-    - Decides if authentication is successful or another challenge is needed
+Cognito's Custom Authentication Challenge consists of two main steps in our code:
 
-2. **Create Auth Challenge (createAuthChallenge)**
-    - Generates the challenge sent to the user
-    - In our case, sets the secret from Secrets Manager as the challenge (this will be the so called "private challenge
-      Parameters")
-    - Stores the secret in `privateChallengeParameters.code`
-    - This information is only available to Lambda functions, not clients
+- Initiate Auth (`adminInitiateAuth`): 
+  - We call Cognito with the target user's ID Cognito starts a new authentication session. 
+  - The sdk method returns a session token for the next step. The challenge name and sessions are the "glue" that holds the flow together.
+  
+- Answer Challenge (`adminRespondToAuthChallenge`): 
+  - We send the impersonation secret along with the session token
+  - If valid, Cognito returns authentication tokens for the target user
 
-3. **Verify Auth Challenge (verifyAuthChallenge)**
-    - Validates the challenge response
-    - Compares `challengeAnswer` with `privateChallengeParameters.code`
-    - Returns true/false in `answerCorrect`
+This two-step flow ensures the validation secret never leaves AWS infrastructure while allowing us to implement secure user impersonation.
+The client actually doesn't even know what happens in the authenticator or how the validation has been implemented. 
+All what you need to know is which parameters to pass, here just a robust secret, but this can be anything really.
 
 ```mermaid
 sequenceDiagram
-participant C as Client
-participant A as API
-participant CI as Cognito
-participant D as DefineAuthChallenge
-participant CC as CreateAuthChallenge
-participant V as VerifyAuthChallenge
-participant S as SecretsManager
+    Client->>API: Request Impersonation
+    API->>Cognito: Initiate Custom Auth Challenge
+    Cognito->>API: Return Session
+    API->>Cognito: Respond with Secret
+    Cognito->>API: Return Tokens (if valid)
+    API->>Client: Return Tokens
+```
+### Under the hood
 
-    C->>A: Request Impersonation
-    A->>S: Get Secret
-    A->>CI: AdminInitiateAuth
-    CI->>D: Define Challenge
-    Note over D: Determine auth steps
-    D->>CI: CUSTOM_CHALLENGE
-    CI->>CC: Create Challenge
-    CC->>S: Get Secret
-    CC->>CI: Set privateChallengeParameters
-    CI->>A: Return Session
-    A->>CI: AdminRespondToAuthChallenge
-    CI->>V: Verify Challenge
-    Note over V: Compare answer with secret
-    V->>CI: answerCorrect
-    CI->>A: Return Tokens
+Here's what happens under the hood with Cognito's Custom Auth lambdas:
+
+1. **Define Auth Challenge** is the orchestrator. When a custom auth is initiated, this lambda:
+   - Gets called after each auth attempt
+   - Tracks how many attempts have been made
+   - Decides what challenge should be next (e.g., `CUSTOM_CHALLENGE`)
+   - Determines if authentication is successful or if another challenge is needed
+   - Without this lambda, Cognito wouldn't know what step comes next or when auth is complete
+
+2. **Create Auth Challenge** is the challenge generator. When a new challenge is needed, this lambda:
+   - Creates/gets the actual challenge data (in your case, gets the secret from Secrets Manager)
+   - Stores this as `privateChallengeParameters` (what the answer should be)
+   - Can also set `publicChallengeParameters` (what gets sent to the client)
+   - Without this lambda, there would be no challenge data to verify against
+
+3. **Verify Auth Challenge** is the validator. When a challenge response comes in, this lambda:
+   - Gets the user's answer and the `privateChallengeParameters`
+   - Compares them to determine if the answer is correct
+   - Returns true/false in `answerCorrect`
+   - Without this lambda, Cognito couldn't verify if the challenge was answered correctly
+
+In our PHP code, you're just seeing the client-side flow (`adminInitiateAuth` -> `adminRespondToAuthChallenge`), 
+but behind the scenes Cognito is orchestrating this whole lambda workflow to manage the challenge state, generate challenges, and verify responses.
+
+For instance, when you call `adminInitiateAuth`, Cognito triggers Define -> Create to set up the challenge. 
+When you call `adminRespondToAuthChallenge`, it triggers Verify -> Define to check the answer and decide what happens next.
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant A as Our API
+    participant Cog as Cognito
+    participant D as Define Lambda
+    participant Cr as Create Lambda
+    participant V as Verify Lambda
+
+    C->>A: Impersonate Request
+    A->>Cog: adminInitiateAuth
+    Cog->>D: Start Flow
+    D->>Cr: Generate Challenge
+    Cr->>Cog: Set privateChallengeParameters
+    Cog->>A: Return Session
+    A->>Cog: adminRespondToAuthChallenge
+    Cog->>V: Verify Secret
+    V->>D: Report Result
+    D->>Cog: Auth Complete
+    Cog->>A: Return Tokens
     A->>C: Return Tokens
-
 ```
 
 ### Security Note
@@ -103,14 +129,14 @@ to implement. Impersonation is a powerful feature that can be easily misused. To
 > You can hang attach a big, beefy lock to that door (e.g. only let users with an administrator role impersonate other
 > users), but it’s a door nonetheless.
 
-For this reason, it's important to complete the implementation with proper security measures:
+Consider these security measures:
 
-- The secret should be secure and stored in a secure way (e.g. Secrets Manager) and be rotated very frequently
-- The Token should be short-lived
-- The impersonation feature should be disabled by default and only enabled for specific users
-- The impersonation feature should be logged and audited
-- A Rate Limiter should be implemented to prevent brute force attacks
-
+- Store and rotate impersonation secrets securely (e.g., AWS Secrets Manager)
+- Make sure the secret fulfills hard security requirements
+- Use short-lived tokens
+- Enable only for authorized support staff
+- Implement proper logging and auditing
+- Add rate limiting to prevent abuse
 
 ## Good articles / resources
 
