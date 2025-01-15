@@ -2,8 +2,8 @@ POST localhost:8000/api/impersonate
 Content-Type: application/json
 
 {
-  "targetUserId": "1",
-  "secretCode": "abcs"
+  "targetUserId": "user",
+  "secretCode": "my-secret-token"
 }
 
 ###
