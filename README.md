@@ -16,6 +16,9 @@
   AWS_PROFILE=default
 ```
 
+**Note** This project uses AWS SSO as login provider. A slight change in the Service Code is needed to use other
+AWS Credentials providers.
+
 **Start the server:**
 
 ```bash
