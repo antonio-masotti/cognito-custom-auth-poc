@@ -5,6 +5,37 @@ based on Symfony.
 A classic use case is to allow support staff to authenticate as specific users for troubleshooting purposes
 while maintaining security and audit trails.
 
+## The Proof of Concept
+
+At its core, this PoC consists of a single POST endpoint `/api/impersonate` that implements the impersonation flow. 
+The implementation is minimal, using just two main classes: 
+- [ImpersonationController](./src/Controller/ImpersonationController.php) handles the HTTP requests and input validation
+- [CognitoService](./src/Service/CognitoService.php) manages the Cognito custom authentication flow.
+
+Example request: see [impersonate.http](./requests/impersonate.http)
+
+```json
+POST /api/impersonate
+Content-Type: application/json
+        
+{
+    "targetUserId": "user123",
+    "secretCode": "your-challenge-secret"
+}
+```
+
+If successful, Cognito will provide authentication tokens for the target user, which are returned as:
+```json
+{
+    "accessToken": "eyJhb....",
+    "refreshToken": "eyJjd....",
+    "idToken": "eyJhb....",
+    "expiresIn": 3600
+}
+```
+
+In case of errors (invalid secret, user not found, etc.), the endpoint returns appropriate HTTP status codes with error messages.
+
 ## Usage
 
 **Prerequisites:**
