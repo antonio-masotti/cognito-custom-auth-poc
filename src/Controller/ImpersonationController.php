@@ -35,8 +35,15 @@ class ImpersonationController extends AbstractController
             return new JsonResponse(['error' => 'Target user ID is required'], 400);
         }
 
+        $secret = $content['secretCode'] ?? null;
+        if (!$secret || !is_string($secret)) {
+            $this->logger->warning('Secret code is required');
+
+            return new JsonResponse(['error' => 'Secret code is required'], 400);
+        }
+
         try {
-            $result = $this->cognitoService->impersonateUser($targetUserId);
+            $result = $this->cognitoService->impersonateUser($targetUserId, $secret);
 
             return new JsonResponse($result);
         } catch (\Exception $e) {

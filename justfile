@@ -8,3 +8,6 @@ php-cs-check:
 
 phpstan:
     vendor/bin/phpstan analyse
+
+start:
+    symfony server:start

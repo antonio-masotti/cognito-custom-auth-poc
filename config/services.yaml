@@ -25,6 +25,7 @@ services:
             $userPoolId: '%env(AWS_COGNITO_USER_POOL_ID)%'
             $clientId: '%env(AWS_COGNITO_CLIENT_ID)%'
             $region: '%env(AWS_REGION)%'
+            $awsProfile: '%env(AWS_PROFILE)%'
 
     # add more service definitions when explicit configuration is needed
     # please note that last definitions always *replace* previous ones

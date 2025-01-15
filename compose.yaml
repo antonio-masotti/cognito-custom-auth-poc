@@ -1,0 +1,12 @@
+
+services:
+  php:
+    build:
+      context: .
+    environment:
+      PHP_IDE_CONFIG: "serverName=cognito-impersonation"
+    volumes:
+      - .:/var/www/html
+      - ./docker/php/xdebug.ini:/usr/local/etc/php/conf.d/xdebug.ini
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

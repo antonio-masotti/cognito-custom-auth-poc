@@ -4,14 +4,17 @@ declare(strict_types=1);
 
 namespace App\Service;
 
-use Aws\CognitoIdentity\CognitoIdentityClient;
+use App\Exceptions\ImpersonationException;
+use App\Exceptions\SecretNotFoundException;
 use Aws\CognitoIdentityProvider\CognitoIdentityProviderClient;
+use Aws\CognitoIdentityProvider\Exception\CognitoIdentityProviderException;
+use Aws\Credentials\CredentialProvider;
+use Aws\SecretsManager\Exception\SecretsManagerException;
 use Aws\SecretsManager\SecretsManagerClient;
-use Symfony\Component\HttpKernel\Log\Logger;
+use Psr\Log\LoggerInterface;
 
 class CognitoService
 {
-    private Logger $logger;
     private CognitoIdentityProviderClient $cognitoClient;
     private SecretsManagerClient $secretsClient;
 
@@ -19,82 +22,98 @@ class CognitoService
         private readonly string $userPoolId,
         private readonly string $clientId,
         private readonly string $region,
+        private readonly string $awsProfile,
+        private readonly LoggerInterface $logger,
     ) {
-        $this->logger = new Logger();
+        // https://docs.aws.amazon.com/sdk-for-php/v3/developer-guide/sso-provider.html
+        $credentials = CredentialProvider::sso($this->awsProfile);
 
-        $this->cognitoClient = new CognitoIdentityProviderClient([
+        $sdkConfig = [
             'version' => 'latest',
             'region' => $this->region,
-            'profile' => $_ENV['AWS_PROFILE'],
-        ]);
-        $this->logger->info('CognitoService initialized');
-        $this->logger->info('User Pool ID: '.$this->userPoolId);
-        $this->logger->info('Client ID: '.$this->clientId);
-        $this->logger->info('Region: '.$this->region);
+            'credentials' => $credentials,
+        ];
 
-        $this->secretsClient = new SecretsManagerClient([
-            'version' => 'latest',
+        $this->cognitoClient = new CognitoIdentityProviderClient($sdkConfig);
+        $this->secretsClient = new SecretsManagerClient($sdkConfig);
+
+        $this->logger->info('CognitoService initialized', [
+            'userPoolId' => $this->userPoolId,
+            'clientId' => $this->clientId,
             'region' => $this->region,
-            'profile' => $_ENV['AWS_PROFILE'],
         ]);
-
-        $this->logger->info('SecretsManagerClient initialized');
     }
 
     /**
-     * @param string $targetUserId
-     * @return array{token: string, refreshToken: string, idToken: string, expiresIn: int}
-     * @throws \Exception
+     * @return array{accessToken: string, refreshToken: string, idToken: string, expiresIn: int}
+     *
+     * @throws ImpersonationException
+     * @throws SecretNotFoundException
      */
-    public function impersonateUser(string $targetUserId): array
+    public function impersonateUser(string $targetUserId, string $providedSecret): array
     {
-        // Get the current secret from Secrets Manager
-        $secret = $this->getImpersonationSecret();
+        $storedSecret = $this->getImpersonationSecret();
+
+        if ($providedSecret !== $storedSecret) {
+            throw new ImpersonationException('Invalid impersonation secret');
+        }
 
         try {
-            // Initiate auth with CUSTOM_AUTH flow
-            $result = $this->cognitoClient->initiateAuth([
-                'AuthFlow' => 'CUSTOM_AUTH',
+            // First, use adminInitiateAuth to start the auth flow
+            $result = $this->cognitoClient->adminInitiateAuth([
+                'UserPoolId' => $this->userPoolId,
                 'ClientId' => $this->clientId,
+                'AuthFlow' => 'CUSTOM_AUTH',
                 'AuthParameters' => [
                     'USERNAME' => $targetUserId,
-                    'CHALLENGE_NAME' => 'CUSTOM_CHALLENGE',
-                    'SECRET' => $secret,
                 ],
             ]);
 
-            $this->logger->info('Impersonation successful');
-            $this->logger->info('Access Token: '.$result['AuthenticationResult']['AccessToken']);
-            $this->logger->info('Refresh Token: '.$result['AuthenticationResult']['RefreshToken']);
-            $this->logger->info('Id Token: '.$result['AuthenticationResult']['IdToken']);
-            $this->logger->info('Expires In: '.$result['AuthenticationResult']['ExpiresIn']);
+            if (!isset($result['AuthenticationResult'])) {
+                throw new ImpersonationException('Authentication failed: No authentication result returned');
+            }
+
+            $this->logger->info('Impersonation successful', [
+                'targetUserId' => $targetUserId,
+                'expiresIn' => $result['AuthenticationResult']['ExpiresIn'],
+            ]);
 
             return [
-                'token' => $result['AuthenticationResult']['AccessToken'],
+                'accessToken' => $result['AuthenticationResult']['AccessToken'],
                 'refreshToken' => $result['AuthenticationResult']['RefreshToken'],
                 'idToken' => $result['AuthenticationResult']['IdToken'],
                 'expiresIn' => $result['AuthenticationResult']['ExpiresIn'],
             ];
-        } catch (\Exception $e) {
-            throw new \Exception('Impersonation failed: '.$e->getMessage());
+        } catch (CognitoIdentityProviderException $e) {
+            $this->logger->error('Cognito authentication failed', [
+                'error' => $e->getMessage(),
+                'targetUserId' => $targetUserId,
+            ]);
+            throw new ImpersonationException('Authentication failed: '.$e->getMessage(), 0, $e);
         }
     }
 
+    /**
+     * @throws SecretNotFoundException
+     */
     private function getImpersonationSecret(): string
     {
         try {
             $result = $this->secretsClient->getSecretValue([
-                'SecretId' => $_ENV['AWS_SECRET_NAME'],
+                'SecretId' => $_ENV['AWS_SECRET_NAME'] ?? throw new SecretNotFoundException('AWS_SECRET_NAME not configured'),
             ]);
 
-            $secret = json_decode($result['SecretString'], true);
-            $this->logger->info('Secret retrieved');
+            if (!isset($result['SecretString'])) {
+                throw new SecretNotFoundException('Secret value not found');
+            }
+            $this->logger->debug('Secret retrieved'.$result);
 
-            return $secret['value'];
-        } catch (\Exception $e) {
-            $message = 'Failed to retrieve impersonation secret: '.$e->getMessage();
-            $this->logger->error($message);
-            throw new \Exception($message);
+            $this->logger->debug('Secret retrieved successfully');
+
+            return $result['SecretString'];
+        } catch (SecretsManagerException $e) {
+            $this->logger->error('Failed to retrieve secret. Error: '.$e->getMessage());
+            throw new SecretNotFoundException('Failed to retrieve impersonation secret', 0, $e);
         }
     }
 }
