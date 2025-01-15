@@ -50,9 +50,10 @@ class CognitoService
      */
     public function impersonateUser(string $targetUserId, string $providedSecret): array
     {
-        $this->validateImpersonationSecret($providedSecret);
-
         try {
+            $this->validateImpersonationSecret($providedSecret);
+            $this->checkUserExists($targetUserId);
+
             $challenge = $this->initiateChallengeAuthentication($targetUserId);
 
             return $this->respondToChallenge($targetUserId, $providedSecret, $challenge);
@@ -142,6 +143,27 @@ class CognitoService
 
         if ($providedSecret !== $storedSecret) {
             throw new ImpersonationException('Invalid impersonation secret');
+        }
+    }
+
+    private function checkUserExists(string $targetUserId)
+    {
+        try {
+            $this->cognitoClient->adminGetUser([
+                'UserPoolId' => $this->userPoolId,
+                'Username' => $targetUserId,
+            ]);
+
+            $this->logger->info('User found', ['targetUserId' => $targetUserId]);
+
+        } catch (CognitoIdentityProviderException $e) {
+            if ($e->getAwsErrorCode() === 'UserNotFoundException') {
+                $this->logger->error('User not found', ['targetUserId' => $targetUserId]);
+                throw new ImpersonationException('User doesn\'t exist');
+            }
+
+            $this->logger->error('Cognito error', ['error' => $e->getMessage()]);
+            throw $e;
         }
     }
 }
