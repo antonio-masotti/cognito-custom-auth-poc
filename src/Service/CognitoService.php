@@ -53,14 +53,13 @@ class CognitoService
     public function impersonateUser(string $targetUserId, string $providedSecret): array
     {
         $storedSecret = $this->getImpersonationSecret();
-
         if ($providedSecret !== $storedSecret) {
             throw new ImpersonationException('Invalid impersonation secret');
         }
 
         try {
-            // First, use adminInitiateAuth to start the auth flow
-            $result = $this->cognitoClient->adminInitiateAuth([
+            // Step 1: Initiate the auth challenge
+            $initiateResult = $this->cognitoClient->adminInitiateAuth([
                 'UserPoolId' => $this->userPoolId,
                 'ClientId' => $this->clientId,
                 'AuthFlow' => 'CUSTOM_AUTH',
@@ -69,20 +68,41 @@ class CognitoService
                 ],
             ]);
 
-            if (!isset($result['AuthenticationResult'])) {
-                throw new ImpersonationException('Authentication failed: No authentication result returned');
+            $this->logger->debug('Challenge initiated', [
+                'challengeName' => $initiateResult['ChallengeName'] ?? 'none',
+                'session' => $initiateResult['Session'] ?? 'none',
+            ]);
+
+            if (!isset($initiateResult['ChallengeName']) || !isset($initiateResult['Session'])) {
+                throw new ImpersonationException('Invalid challenge response from Cognito');
+            }
+
+            // Step 2: Respond to the challenge with our secret
+            $challengeResponse = $this->cognitoClient->adminRespondToAuthChallenge([
+                'UserPoolId' => $this->userPoolId,
+                'ClientId' => $this->clientId,
+                'ChallengeName' => $initiateResult['ChallengeName'],
+                'ChallengeResponses' => [
+                    'USERNAME' => $targetUserId,
+                    'ANSWER' => $storedSecret  // This should match what your Lambda expects
+                ],
+                'Session' => $initiateResult['Session']
+            ]);
+
+            if (!isset($challengeResponse['AuthenticationResult'])) {
+                throw new ImpersonationException('Challenge response failed: No authentication result returned');
             }
 
             $this->logger->info('Impersonation successful', [
                 'targetUserId' => $targetUserId,
-                'expiresIn' => $result['AuthenticationResult']['ExpiresIn'],
+                'expiresIn' => $challengeResponse['AuthenticationResult']['ExpiresIn'],
             ]);
 
             return [
-                'accessToken' => $result['AuthenticationResult']['AccessToken'],
-                'refreshToken' => $result['AuthenticationResult']['RefreshToken'],
-                'idToken' => $result['AuthenticationResult']['IdToken'],
-                'expiresIn' => $result['AuthenticationResult']['ExpiresIn'],
+                'accessToken' => $challengeResponse['AuthenticationResult']['AccessToken'],
+                'refreshToken' => $challengeResponse['AuthenticationResult']['RefreshToken'],
+                'idToken' => $challengeResponse['AuthenticationResult']['IdToken'],
+                'expiresIn' => $challengeResponse['AuthenticationResult']['ExpiresIn'],
             ];
         } catch (CognitoIdentityProviderException $e) {
             $this->logger->error('Cognito authentication failed', [
